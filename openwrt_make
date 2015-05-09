@@ -1,0 +1,123 @@
+#
+# Bash completion script for OpenWrt make targets
+# https://github.com/sairon/openwrt-bash-completion
+#
+# Copyright (C) 2015 Jan Cermak <sairon@sairon.cz>
+# Released under the MIT license.
+#
+
+# source standard make completion as a fallback for non-openwrt targets
+[ -f /usr/share/bash-completion/completions/make ] && . /usr/share/bash-completion/completions/make
+
+# TODO: [[ -n $OPENWRT_COMPL_USE_PRINTDB ]] && OPENWRT_COMPL_USE_PRINTDB=0
+
+# remove slashes from COMPREPLY items for replies that are valid directory path
+# this is a workaround for unwanted behaviour of completion with option -o filenames
+_deslash_compreply_dirs()
+{
+    local i
+    for (( i=0; i < ${#COMPREPLY[@]}; i++ )); do
+        [[ -d ${COMPREPLY[$i]} ]] && COMPREPLY[$i]=${COMPREPLY[$i]::(-1)}
+    done
+}
+
+_complete_noprintdb()
+{
+    local cur=${2}
+    # split to tokens by '/' delimiter
+    local tokens=(${cur//// })
+
+    # we want to complete next token if the last character is slash
+    if [[ ${cur:(-1)} = "/" ]]; then
+        tokens+=('')
+    fi
+
+    compopt -o filenames
+
+    # query is equivalent of "$cur" in context of slash-separated path
+    local query="${tokens[@]:(-1)}"
+    local main_target="${tokens[0]}"
+
+    case ${#tokens[@]} in
+        2)
+            _discover_subtargets "${main_target}"
+            COMPREPLY=( $(compgen -P "${main_target}/" -S / -W "$completions" -- "$query") )
+            _discover_subtargets actions
+            COMPREPLY+=( $(compgen -P "${main_target}/" -W "$completions" -- "$query") )
+            _deslash_compreply_dirs
+            return 0;
+        ;;
+        3)
+            local subtarget=${tokens[${#tokens[@]}-2])}
+            # add space after this completion
+            compopt +o nospace
+            _discover_subtargets "actions"
+            COMPREPLY=( $(compgen -P "${main_target}/${subtarget}/" -W "$completions" -- "$query") )
+            _deslash_compreply_dirs
+            return 0;
+        ;;
+    esac
+}
+
+_discover_subtargets()
+{
+    local actions="clean compile configure dist distcheck download install prepare prereq refresh update"
+    case "$1" in
+        package)
+            completions=$(find -L package/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev)
+        ;;
+        tools)
+            completions=$(find tools/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev)
+        ;;
+        target)
+            completions=$(find target/ -name Makefile | cut -d/ -f2 | grep -v ^Makefile | sort | uniq)
+        ;;
+        toolchain)
+            # uClibc and gcc have more levels - this is not reflected here
+            completions=$(find toolchain/ -name Makefile | grep -v src/Makefile | cut -d/ -f2 | grep -v ^Makefile)
+        ;;
+        actions)
+            completions=$actions
+        ;;
+        *)
+            completions=""
+        ;;
+    esac
+}
+
+_complete_printdb()
+{
+    # TODO: use output of $(make printdb | grep '^\(package\|target\|toolchain\|tools\).*:$')
+    return 0;
+}
+
+_is_openwrt_buildroot()
+{
+    # heuristics based on head of Makefile
+    [[ -f Makefile ]] && return $( head Makefile -n5 | grep -q OpenWrt )
+    return 1
+}
+
+_openwrt_make()
+{
+    if ( ! _is_openwrt_buildroot ); then
+        _make
+        return 0;
+    fi
+
+    local cur=$2
+    COMPREPLY=()
+
+    compopt -o nospace
+
+    if [[ $cur =~ (package|target|toolchain|tools)/.* ]]; then
+        _complete_noprintdb "$@"
+        return 0;
+    fi
+    # add default make targets if make completion exists
+    declare -f _make > /dev/null && _make
+    COMPREPLY+=( $(compgen -S / -W "package target tools toolchain" -- "$cur") )
+    return 0;
+}
+
+complete -F _openwrt_make make
