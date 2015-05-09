@@ -37,12 +37,13 @@ _complete_noprintdb()
     # query is equivalent of "$cur" in context of slash-separated path
     local query="${tokens[@]:(-1)}"
     local main_target="${tokens[0]}"
+    local completions=""
 
     case ${#tokens[@]} in
         2)
-            _discover_subtargets "${main_target}"
+            completions=$(_discover_subtargets "${main_target}")
             COMPREPLY=( $(compgen -P "${main_target}/" -S / -W "$completions" -- "$query") )
-            _discover_subtargets actions
+            completions=$(_discover_subtargets "actions")
             COMPREPLY+=( $(compgen -P "${main_target}/" -W "$completions" -- "$query") )
             _deslash_compreply_dirs
             return 0;
@@ -51,7 +52,7 @@ _complete_noprintdb()
             local subtarget=${tokens[${#tokens[@]}-2])}
             # add space after this completion
             compopt +o nospace
-            _discover_subtargets "actions"
+            completions=$(_discover_subtargets "actions")
             COMPREPLY=( $(compgen -P "${main_target}/${subtarget}/" -W "$completions" -- "$query") )
             _deslash_compreply_dirs
             return 0;
@@ -64,23 +65,23 @@ _discover_subtargets()
     local actions="clean compile configure dist distcheck download install prepare prereq refresh update"
     case "$1" in
         package)
-            completions=$(find -L package/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev)
+            find -L package/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev
         ;;
         tools)
-            completions=$(find tools/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev)
+            find tools/ -name Makefile | grep -v src/Makefile | rev | cut -d/ -f2 | rev
         ;;
         target)
-            completions=$(find target/ -name Makefile | cut -d/ -f2 | grep -v ^Makefile | sort | uniq)
+            find target/ -name Makefile | cut -d/ -f2 | grep -v ^Makefile | sort | uniq
         ;;
         toolchain)
             # uClibc and gcc have more levels - this is not reflected here
-            completions=$(find toolchain/ -name Makefile | grep -v src/Makefile | cut -d/ -f2 | grep -v ^Makefile)
+            find toolchain/ -name Makefile | grep -v src/Makefile | cut -d/ -f2 | grep -v ^Makefile
         ;;
         actions)
-            completions=$actions
+            echo "$actions"
         ;;
         *)
-            completions=""
+            echo ""
         ;;
     esac
 }
