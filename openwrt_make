@@ -9,7 +9,9 @@
 # source standard make completion as a fallback for non-openwrt targets
 [ -f /usr/share/bash-completion/completions/make ] && . /usr/share/bash-completion/completions/make
 
-# TODO: [[ -n $OPENWRT_COMPL_USE_PRINTDB ]] && OPENWRT_COMPL_USE_PRINTDB=0
+[[ -n $OPENWRT_COMPL_USE_PRINTDB ]] || OPENWRT_COMPL_USE_PRINTDB=0
+[[ -n $OPENWRT_COMPL_CACHE_PRINTDB ]] || OPENWRT_COMPL_CACHE_PRINTDB=1
+OPENWRT_COMPL_CACHE=
 
 # remove slashes from COMPREPLY items for replies that are valid directory path
 # this is a workaround for unwanted behaviour of completion with option -o filenames
@@ -21,6 +23,13 @@ _deslash_compreply_dirs()
     done
 }
 
+_rebuild_tokens()
+{
+    local IFS="/"
+    echo "$*"
+}
+
+# completion based on simple search for Makefiles in the relevant parts of the buildroot
 _complete_noprintdb()
 {
     local cur=${2}
@@ -86,9 +95,55 @@ _discover_subtargets()
     esac
 }
 
+# completion based on 'make printdb' output - slower but more accurate
+# if OPENWRT_COMPL_CACHE_PRINTDB is set to 1, output of printdb is cached
+# in a global OPENWRT_COMPL_CACHE - this variable must be cleared if the
+# package definitions were changed, but completion is then way faster
 _complete_printdb()
 {
-    # TODO: use output of $(make printdb | grep '^\(package\|target\|toolchain\|tools\).*:$')
+    compopt -o filenames
+    local cur=${2}
+    # split to tokens by '/' delimiter
+    local tokens=(${cur//// })
+    # we want to complete next token if the last character is slash
+    if [[ ${cur:(-1)} = "/" ]]; then
+        tokens+=('')
+    fi
+    local main_target="${tokens[0]}"
+    local query="${tokens[@]:(-1)}"
+    local prefix="$(_rebuild_tokens ${tokens[@]::${#tokens[@]}-1})/"
+
+    local db=""
+    if [[ $OPENWRT_COMPL_CACHE_PRINTDB = 0 || $OPENWRT_COMPL_CACHE_PRINTDB = 1 && -z $OPENWRT_COMPL_CACHE ]]; then
+        db=$(make printdb | sed "/# Not a target:/,+1 d" | grep '^\(package\|target\|toolchain\|tools\).*:\([^=].*\|$\)' | sed 's/:.*$//')
+    fi
+
+    # populate/fetch from cache
+    if [[ $OPENWRT_COMPL_CACHE_PRINTDB = 1 ]]; then
+        if [[ -z $OPENWRT_COMPL_CACHE ]]; then
+            OPENWRT_COMPL_CACHE="$db"
+        else
+            db="$OPENWRT_COMPL_CACHE"
+        fi
+    fi
+
+    # sed for normalization of package paths
+    local packages_sed="/.*host\/[^\/]*/   s~package/.*/([^/]*/host/.*)$~package/\1~;
+                        /.*host\/[^\/]*/b; s~package/.*/([^/]*)/([^/]*)$~package/\1/\2~"
+
+    local filtered_db=$(echo "$db" \
+    | grep "^${main_target}.*${query}.*$" \
+    | sed -r "$packages_sed" \
+    | grep "$prefix" \
+    | sed -r "s~^${prefix}([^/]*/?).*~\1~" \
+    | sort | uniq \
+    )
+
+    COMPREPLY=( $(compgen -P "${prefix}" -W "$filtered_db" -- "$query") )
+    # add space if we have nothing to complete (= last chart is not slash)
+    [[ ${#COMPREPLY[@]} = 1 && ${COMPREPLY:(-1)} != "/"  ]] && compopt +o nospace
+    _deslash_compreply_dirs
+
     return 0;
 }
 
@@ -112,7 +167,11 @@ _openwrt_make()
     compopt -o nospace
 
     if [[ $cur =~ (package|target|toolchain|tools)/.* ]]; then
-        _complete_noprintdb "$@"
+        if [[ $OPENWRT_COMPL_USE_PRINTDB -eq 1 ]]; then
+            _complete_printdb "$@"
+        else
+            _complete_noprintdb "$@"
+        fi
         return 0;
     fi
     # add default make targets if make completion exists
